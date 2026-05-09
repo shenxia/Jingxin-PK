@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>静心 · 冥想PK 即插即用</title>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/localforage@1.10.0/dist/localforage.min.js"></script>
+<style>
+body{margin:0;padding:0;font-family:'Noto Serif SC',sans-serif;background:#f5f0e8;color:#333;}
+header{padding:12px;text-align:center;font-size:20px;font-weight:bold;background:#c45c48;color:white;}
+.page{display:none;padding:12px;margin-bottom:60px;}
+.page.active{display:block;}
+.card{background:white;padding:12px;margin:10px 0;border-radius:10px;box-shadow:0 3px 6px rgba(0,0,0,0.1);}
+button{padding:6px 10px;margin:4px;border:none;border-radius:6px;background:#c45c48;color:white;cursor:pointer;}
+input,select,textarea{width:100%;padding:6px;margin:4px 0;border-radius:4px;border:1px solid #ccc;}
+.list-item{padding:6px;border-bottom:1px solid #eee;font-size:14px;}
+nav{position:fixed;bottom:0;width:100%;display:flex;background:#c45c48;color:white;}
+nav button{flex:1;background:none;color:white;border:none;padding:12px;font-size:16px;}
+#timer-display{text-align:center;font-size:32px;margin:12px 0;}
+</style>
+</head>
+<body>
+<header>静心 · 冥想PK 即插即用</header>
+
+<!-- 我的页面 -->
+<div id="my" class="page active">
+<div class="card">
+<label>你的昵称</label>
+<input type="text" id="my-name" placeholder="输入你的名字" value="甲">
+<label>好友昵称</label>
+<input type="text" id="friend-name" placeholder="输入好友名字" value="乙">
+<label>房间号</label>
+<input type="text" id="room-id" placeholder="输入房间号">
+<label>PK 周期</label>
+<select id="pk-duration">
+<option value="7">七日 · 周赛</option>
+<option value="14">半月赛</option>
+<option value="30" selected>月赛</option>
+<option value="90">季度赛</option>
+</select>
+<label>起始日期</label>
+<input type="date" id="start-date">
+<button onclick="startPK()">立下战书</button>
+<button onclick="connectFirebase()">连接房间</button>
+</div>
+<div class="card">
+<h3>提醒好友打卡</h3>
+<button onclick="sendReminder()">提醒好友</button>
+<ul id="reminderList"></ul>
+</div>
+</div>
+
+<!-- 计时页面 -->
+<div id="timer" class="page">
+<div class="card">
+<h3>冥想计时</h3>
+<div id="timer-display">00:00</div>
+<button onclick="toggleTimer()" id="timer-btn">开始</button>
+<button onclick="resetTimer()">重置</button>
+<audio id="bowl-audio" src="https://cdn.pixabay.com/audio/2022/03/15/audio_c8c8a73467.mp3"></audio>
+</div>
+<div class="card">
+<h3>快速打卡</h3>
+<button onclick="quickLog(1)">+1 分钟</button>
+<button onclick="quickLog(5)">+5 分钟</button>
+<button onclick="quickLog(10)">+10 分钟</button>
+</div>
+</div>
+
+<!-- 数据页面 -->
+<div id="data" class="page">
+<div class="card">
+<h3>打卡记录</h3>
+<ul id="recordList"></ul>
+</div>
+</div>
+
+<nav>
+<button onclick="showPage('my')">我的</button>
+<button onclick="showPage('timer')">计时</button>
+<button onclick="showPage('data')">数据</button>
+</nav>
+
+<script>
+// ---------- 页面切换 ----------
+function showPage(id){
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'))
+  document.getElementById(id).classList.add('active')
+}
+
+// ---------- 本地存储 ----------
+localforage.config({name:'jingxinPK'})
+let data={my:{name:'甲',records:[]},friend:{name:'乙',records:[]},pkDuration:30,startDate:null,reminders:[],currentUser:'my',roomId:null,fbUrl:null}
+let timer={duration:600,remaining:600,interval:null,isRunning:false}
+let roomRef=null
+
+async function saveLocal(){await localforage.setItem('jingxinPK',data)}
+async function loadLocal(){
+  const stored=await localforage.getItem('jingxinPK')
+  if(stored){data=stored;renderRecords();renderReminders()}
+}
+loadLocal()
+
+// ---------- 开始PK ----------
+function startPK(){
+  data.my.name=document.getElementById('my-name').value||'甲'
+  data.friend.name=document.getElementById('friend-name').value||'乙'
+  data.pkDuration=parseInt(document.getElementById('pk-duration').value)
+  const dateVal=document.getElementById('start-date').value
+  data.startDate=dateVal?new Date(dateVal).toISOString():new Date().toISOString()
+  data.roomId=document.getElementById('room-id').value
+  saveLocal()
+  alert('PK 已开始')
+}
+
+// ---------- 计时器 ----------
+function toggleTimer(){
+  const audio=document.getElementById('bowl-audio')
+  if(timer.isRunning){
+    clearInterval(timer.interval)
+    timer.isRunning=false
+    document.getElementById('timer-btn').textContent='开始'
+    audio.play()
+  }else{
+    timer.isRunning=true
+    document.getElementById('timer-btn').textContent='暂停'
+    audio.play()
+    timer.interval=setInterval(()=>{
+      timer.remaining--
+      if(timer.remaining<=0){clearInterval(timer.interval);timer.isRunning=false;audio.play()}
+      renderTimer()
+    },1000)
+  }
+}
+function resetTimer(){clearInterval(timer.interval);timer.remaining=timer.duration;timer.isRunning=false;renderTimer()}
+function renderTimer(){const m=Math.floor(timer.remaining/60);const s=timer.remaining%60;document.getElementById('timer-display').textContent=`${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`}
+renderTimer()
+
+// ---------- 快速打卡 ----------
+function quickLog(min){
+  const user=data.currentUser==='my'?data.my:data.friend
+  const rec={id:crypto.randomUUID(),minutes:min,date:new Date().toISOString()}
+  user.records.push(rec)
+  saveLocal()
+  pushToCloud()
+  renderRecords()
+  checkReminders(user)
+}
+
+// ---------- 提醒 ----------
+function sendReminder(){
+  const reminder={id:crypto.randomUUID(),from:data.currentUser==='my'?data.my.name:data.friend.name,to:data.currentUser==='my'?data.friend.name:data.my.name,time:new Date().toISOString(),done:false}
+  data.reminders.push(reminder)
+  saveLocal()
+  pushToCloud()
+  renderReminders()
+}
+function renderReminders(){
+  const ul=document.getElementById('reminderList')
+  ul.innerHTML=''
+  data.reminders.slice(-20).forEach(r=>{
+    const li=document.createElement('li')
+    li.className='list-item '+(r.done?'done':'')
+    li.textContent=`${r.from} → ${r.to} ${new Date(r.time).toLocaleTimeString()} ${r.done?'✅已打卡':'⬜未打卡'}`
+    ul.appendChild(li)
+  })
+}
+function checkReminders(user){
+  data.reminders.forEach(r=>{if(!r.done && r.to===user.name) r.done=true})
+  renderReminders()
+}
+
+// ---------- 打卡记录 ----------
+function renderRecords(){
+  const ul=document.getElementById('recordList')
+  ul.innerHTML=''
+  const all=[...data.my.records,...data.friend.records].sort((a,b)=>new Date(b.date)-new Date(a.date)).slice(0,20)
+  all.forEach(r=>{
+    const li=document.createElement('li')
+    li.className='list-item'
+    li.textContent=`${r.date.split('T')[0]} ${r.minutes} 分钟`
+    ul.appendChild(li)
+  })
+}
+
+// ---------- Firebase 即插即用 ----------
+function connectFirebase(){
+  const room
